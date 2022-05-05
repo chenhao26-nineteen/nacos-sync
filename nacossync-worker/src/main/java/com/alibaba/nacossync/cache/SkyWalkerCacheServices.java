@@ -51,6 +51,9 @@ public class SkyWalkerCacheServices {
     private static Map<String, FinishedTask> finishedTaskMap = new ConcurrentHashMap<>();
 
     public String getClusterConnectKey(String clusterId) {
+        if (clusterId.contains(":")) {
+            clusterId = clusterId.split(":")[1];
+        }
         List<String> allClusterConnectKey = getAllClusterConnectKey(clusterId);
 
         return allClusterConnectKey.get(ThreadLocalRandom.current().nextInt(allClusterConnectKey.size()));

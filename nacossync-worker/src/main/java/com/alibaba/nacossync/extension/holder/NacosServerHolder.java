@@ -21,6 +21,7 @@ import com.google.common.base.Joiner;
 import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.logging.log4j.util.Strings;
@@ -35,6 +36,8 @@ import org.springframework.stereotype.Service;
 public class NacosServerHolder extends AbstractServerHolderImpl<NamingService> {
 
     private final ClusterAccessService clusterAccessService;
+    
+    private static ConcurrentHashMap<String,NamingService> globalNameService = new ConcurrentHashMap<>(16);
 
     public NacosServerHolder(ClusterAccessService clusterAccessService) {
         this.clusterAccessService = clusterAccessService;
@@ -43,9 +46,17 @@ public class NacosServerHolder extends AbstractServerHolderImpl<NamingService> {
     @Override
     NamingService createServer(String clusterId, Supplier<String> serverAddressSupplier)
         throws Exception {
+        String newCLusterId;
+        if (clusterId.contains(":")) {
+            String[] split = clusterId.split(":");
+            newCLusterId = split[1];
+        } else {
+            newCLusterId = clusterId;
+        }
+        //代表此时为组合key，确定target集群中的nameService是不同的
         List<String> allClusterConnectKey = skyWalkerCacheServices
-            .getAllClusterConnectKey(clusterId);
-        ClusterDO clusterDO = clusterAccessService.findByClusterId(clusterId);
+            .getAllClusterConnectKey(newCLusterId);
+        ClusterDO clusterDO = clusterAccessService.findByClusterId(newCLusterId);
         String serverList = Joiner.on(",").join(allClusterConnectKey);
         Properties properties = new Properties();
         properties.setProperty(PropertyKeyConst.SERVER_ADDR, serverList);
@@ -58,6 +69,13 @@ public class NacosServerHolder extends AbstractServerHolderImpl<NamingService> {
         Optional.ofNullable(clusterDO.getPassword()).ifPresent(value ->
             properties.setProperty(PropertyKeyConst.PASSWORD, value)
         );
-        return NamingFactory.createNamingService(properties);
+        NamingService namingService = NamingFactory.createNamingService(properties);
+    
+        globalNameService.put(clusterId,namingService);
+        return namingService;
+    }
+    
+    public NamingService getNameService(String clusterId){
+        return globalNameService.get(clusterId);
     }
 }
