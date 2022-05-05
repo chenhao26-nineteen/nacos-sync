@@ -43,7 +43,9 @@ public interface SyncService {
      * Determines that the current instance data is from another source cluster
      */
     default boolean needSync(Map<String, String> sourceMetaData) {
-        return StringUtils.isBlank(sourceMetaData.get(SkyWalkerConstants.SOURCE_CLUSTERID_KEY));
+        boolean syncTag = StringUtils.isBlank(sourceMetaData.get(SkyWalkerConstants.SYNC_INSTANCE_TAG));
+        boolean blank = StringUtils.isBlank(sourceMetaData.get(SkyWalkerConstants.SOURCE_CLUSTERID_KEY));
+        return syncTag && blank;
     }
 
     /**
