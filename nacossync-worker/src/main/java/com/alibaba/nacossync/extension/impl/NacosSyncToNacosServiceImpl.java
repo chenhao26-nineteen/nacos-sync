@@ -179,7 +179,7 @@ public class NacosSyncToNacosServiceImpl implements SyncService {
         return true;
     }
 
-    private  void  doSync(String taskId, TaskDO taskDO, NamingService sourceNamingService,
+    private void doSync(String taskId, TaskDO taskDO, NamingService sourceNamingService,
         NamingService destNamingService) throws NacosException {
         if (syncTaskTap.putIfAbsent(taskId, 1) != null) {
             log.info("任务Id:{}上一个同步任务尚未结束", taskId);
@@ -189,29 +189,48 @@ public class NacosSyncToNacosServiceImpl implements SyncService {
             // 直接从本地保存的serviceInfoMap中取订阅的服务实例
             List<Instance> sourceInstances = sourceNamingService.getAllInstances(taskDO.getServiceName(),
                 getGroupNameOrDefault(taskDO.getGroupName()), new ArrayList<>(), true);
-            //如果此时sourceInstance中的实例为空，证明此时实例下线或实例不存在
-            if (CollectionUtils.isEmpty(sourceInstances)) {
-                List<Instance> destInstances = destNamingService.getAllInstances(taskDO.getServiceName(),
-                        getGroupNameOrDefault(taskDO.getGroupName()), new ArrayList<>(), true);
-                if (CollectionUtils.isEmpty(destInstances)) {
-                    // 不需要执行反注册
-                    return;
-                }
-                for (Instance destInstance : destInstances) {
-                    Map<String, String> metadata = destInstance.getMetadata();
-                    String destSourceClusterId = metadata.get(SkyWalkerConstants.SOURCE_CLUSTERID_KEY);
-                    if (needDeregister(destSourceClusterId,taskDO.getSourceClusterId())) {
-                        // 需要执行反注册
-                        destNamingService.deregisterInstance(taskDO.getServiceName(),getGroupNameOrDefault(taskDO.getGroupName()),destInstance);
-                    }
-                }
+            // processing instance offline
+            if (processDeRegisterInstances(taskDO, destNamingService, sourceInstances)) {
                 return;
             }
-            // 同步实例
+            // Synchronization instance
             this.syncNewInstance(taskDO, destNamingService, sourceInstances);
         } finally {
             syncTaskTap.remove(taskId);
         }
+    }
+    
+    private boolean processDeRegisterInstances(TaskDO taskDO, NamingService destNamingService, List<Instance> sourceInstances)
+            throws NacosException {
+        //如果此时sourceInstance中的实例为空，证明此时实例下线或实例不存在
+        if (CollectionUtils.isEmpty(sourceInstances)) {
+            List<Instance> destInstances = destNamingService.getAllInstances(taskDO.getServiceName(),
+                    getGroupNameOrDefault(taskDO.getGroupName()), new ArrayList<>(), true);
+            if (CollectionUtils.isEmpty(destInstances)) {
+                // 不需要执行反注册
+                return true;
+            }
+            deRegisterFilter(destInstances,taskDO.getSourceClusterId());
+            if (CollectionUtils.isNotEmpty(destInstances)){
+                //执行反注册,拿出一个实例即可
+                destNamingService.deregisterInstance(taskDO.getServiceName(),getGroupNameOrDefault(taskDO.getGroupName()),destInstances.get(0));
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void deRegisterFilter(List<Instance> destInstances, String sourceClusterId){
+        List<Instance> newDestInstance = new ArrayList<>();
+        for (Instance destInstance : destInstances) {
+            Map<String, String> metadata = destInstance.getMetadata();
+            String destSourceClusterId = metadata.get(SkyWalkerConstants.SOURCE_CLUSTERID_KEY);
+            if (needDeregister(destSourceClusterId, sourceClusterId)) {
+                // 需要执行反注册
+                newDestInstance.add(destInstance);
+            }
+        }
+        destInstances = newDestInstance;
     }
     
     private static boolean needDeregister(String destClusterId, String sourceClusterId){
@@ -233,7 +252,11 @@ public class NacosSyncToNacosServiceImpl implements SyncService {
                 latestSyncInstance.add(instance.toString());
             }
         }
-        destNamingService.batchRegisterInstance(taskDO.getServiceName(),getGroupNameOrDefault(taskDO.getGroupName()),needBatchRegisterInstances);
+        
+        if (CollectionUtils.isNotEmpty(needBatchRegisterInstances)) {
+            destNamingService.batchRegisterInstance(taskDO.getServiceName(), getGroupNameOrDefault(taskDO.getGroupName()),
+                    needBatchRegisterInstances);
+        }
         if (CollectionUtils.isNotEmpty(latestSyncInstance)) {
 
             log.info("任务Id:{},已同步实例个数:{}", taskId, latestSyncInstance.size());
